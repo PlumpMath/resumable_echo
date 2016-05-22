@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 2.6)
 
-PROJECT(resumable_echo_svr)
+PROJECT(resumable_echo)
 
 SET(BOOST_USE_STATIC_LIBS ON)
 find_package(Boost COMPONENTS system REQUIRED)
