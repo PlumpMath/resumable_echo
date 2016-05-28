@@ -2,12 +2,14 @@
 #include <future>
 #include <iostream>
 #include <experimental/resumable>
+#include <algorithm>
 
 #include "boost/asio.hpp"
 #include "boost/array.hpp"
+#include "boost/asio/use_future.hpp"
 
 using namespace boost::asio;
-class Connection :public std::enable_shared_from_this<Connection>
+class Connection: public std::enable_shared_from_this<Connection>
 {
 public:
     using Ptr = std::shared_ptr<Connection>;
@@ -19,30 +21,23 @@ public:
     std::future<size_t> run()
     {
         std::cout << "run" << std::endl;
-        if (auto size = __await async_read())
+        try 
         {
-            std::string read_str = std::string(buf_.data(), size);
-            std::cout << "got size:" << size << ", msg:" << read_str << std::endl;
-            if (read_str == "exit")
-                return 0;
-
-            return __await async_write(size);
+            while (true)
+            {
+              auto size = await socket_.async_read_some(buffer(buf_), use_future);
+              std::string read_str = std::string(buf_.data(), size);
+              std::cout << "got size:" << size << ", msg:" << read_str << std::endl;
+              if (read_str == "exit")
+                  return 0;
+              await socket_.async_write_some(buffer(buf_, size), use_future);
+            }
+            return 0;
         }
-        return 0;
-    }
-
-    std::future<size_t> async_read()
-    {
-        return std::async([&] {
-            buf_.assign(0);
-            return socket_.receive(buffer(buf_));
-        });
-    }
-    std::future<size_t> async_write(size_t size)
-    {
-        return std::async([&] {
-            return socket_.send(buffer(buf_, size));
-        });
+        catch (const std::exception& e)
+        {
+            std::cerr << "1:" << e.what() << std::endl;
+        }
     }
 
     ip::tcp::socket& socket()
@@ -67,24 +62,39 @@ public:
 
     void start_accept()
     {
+        std::cout << "start accept" << std::endl;
         auto connection = Connection::create(acceptor_.get_io_service());
         acceptor_.async_accept(connection->socket(),
             std::bind(&Server::handle_accept, this, std::placeholders::_1, connection));
+
+        //await acceptor_.async_accept(connection->socket(), use_future);
+        //sessions_.push_back(connection);
+        //connection->run();
+        //start_accept();
     }
     void handle_accept(const boost::system::error_code& ec, Connection::Ptr connection)
     {
-        if (!ec)
+        try
         {
-            size_t size;
-            while (size = connection->run().get());
-            std::cout << "end." << size << std::endl;
+            if (!ec)
+            {
+                sessions_.push_back(connection);
+                connection->run();
+            }
+            else
+            {
+                std::cout << "error:" << ec << std::endl;
+            }
+            start_accept();
         }
-        else
+        catch (const std::exception& e)
         {
-            std::cout << "error:" << ec << std::endl;
+          std::cerr << "2:" << e.what() << std::endl;
+          sessions_.erase(
+              std::remove(begin(sessions_), end(sessions_), connection), end(sessions_));
         }
-        start_accept();
     }
 private:
     ip::tcp::acceptor acceptor_;
+    std::vector<Connection::Ptr> sessions_;
 };
